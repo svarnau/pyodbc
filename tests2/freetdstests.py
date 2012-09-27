@@ -1,5 +1,5 @@
 #!/usr/bin/python
-# -*- coding: latin-1 -*-
+# -*- coding: utf-8 -*-
 
 usage = """\
 usage: %prog [options] connection_string
@@ -14,7 +14,11 @@ before running the tests.
 You can also put the connection string into tmp/setup.cfg like so:
 
   [freetdstests]
-  connection-string=DSN=xyz;UID=test;PWD=test
+  connection-string=DSN=xyz;UID=test;PWD=test;TDS_Version=7.2;
+
+The TDS_Version will need to match the SQL Server version you are connecting to:
+
+  http://www.freetds.org/userguide/choosingtdsprotocol.htm
 """
 
 import sys, os, re
@@ -113,7 +117,7 @@ class FreeTDSTestCase(unittest.TestCase):
         for i in range(3):
             self.cursor.execute("select n from t1 where n < ?", 10)
             self.cursor.execute("select n from t1 where n < 3")
-        
+
 
     def test_different_bindings(self):
         self.cursor.execute("create table t1(n int)")
@@ -159,7 +163,7 @@ class FreeTDSTestCase(unittest.TestCase):
             self.cursor.execute("insert into t1(i) values(?)", i)
 
         self.cursor.execute("select i from t1 where i < 2 order by i; select i from t1 where i >= 2 order by i")
-        
+
         for i, row in enumerate(self.cursor):
             self.assertEqual(i, row.i)
 
@@ -175,6 +179,40 @@ class FreeTDSTestCase(unittest.TestCase):
         v = self.cursor.execute("select * from t1").fetchone()[0]
         self.assertEqual(type(v), unicode)
         self.assertEqual(len(v), len(value)) # If we alloc'd wrong, the test below might work because of an embedded NULL
+        self.assertEqual(v, value)
+
+
+    def test_issue153(self):
+        # The insert is working, but SQLGetData returns question marks.
+        #
+        # [000000.101492]
+        # python          7FFF79F56180 ENTER SQLGetData
+        #               SQLHSTMT          0x7fc828e1af60
+        #               SQLUSMALLINT      1
+        #               SQLSMALLINT       -8 (SQL_C_WCHAR)
+        #               SQLPOINTER        0x7fff5157b860
+        #               SQLLEN            1024
+        #               SQLLEN          * 0x7fff5157b820
+        #
+        # [000000.101532]
+        # python          7FFF79F56180 EXIT  SQLGetData with return code 1 (SQL_SUCCESS_WITH_INFO)
+        #               SQLHSTMT          0x7fc828e1af60
+        #               SQLUSMALLINT      1
+        #               SQLSMALLINT       -8 (SQL_C_WCHAR)
+        #               SQLPOINTER        0x7fff5157b860
+        #                                 | cc_Name: ?????, ???                      |
+        #               SQLLEN            1024
+        #               SQLLEN          * 0x7fff5157b820 (76)
+
+        value = u'cc_Name: Аймаг, хот'
+
+        self.cursor.execute("create table t1(s nvarchar(500))")
+        self.cursor.execute("insert into t1 values(?)", value)
+
+        self.cursor.commit()
+
+        v = self.cursor.execute("select * from t1").fetchone()[0]
+        self.assertEqual(type(v), unicode)
         self.assertEqual(v, value)
 
 
@@ -272,7 +310,7 @@ class FreeTDSTestCase(unittest.TestCase):
         self.assertEqual(v3, row.c3)
 
     def test_varchar_upperlatin(self):
-        self._test_strtype('varchar', '�')
+        self._test_strtype('varchar', 'á')
 
     #
     # unicode
@@ -290,10 +328,10 @@ class FreeTDSTestCase(unittest.TestCase):
         locals()['test_unicode_%s' % len(value)] = _maketest(value)
 
     def test_unicode_upperlatin(self):
-        self._test_strtype('nvarchar', u'�')
+        self._test_strtype('nvarchar', u'á')
 
     def test_unicode_longmax(self):
-        # Issue 188:	Segfault when fetching NVARCHAR(MAX) data over 511 bytes
+        # Issue 188:    Segfault when fetching NVARCHAR(MAX) data over 511 bytes
 
         ver = self.get_sqlserver_version()
         if ver < 9:            # 2005+
@@ -304,7 +342,7 @@ class FreeTDSTestCase(unittest.TestCase):
         value = u'test'
         v = self.cursor.execute("select ?", value).fetchone()[0]
         self.assertEqual(value, v)
-        
+
     #
     # binary
     #
@@ -351,7 +389,7 @@ class FreeTDSTestCase(unittest.TestCase):
 
     if sys.hexversion >= 0x02060000:
         # Python 2.6+ supports bytearray, which pyodbc considers varbinary.
-        
+
         # Generate a test for each fencepost size: test_unicode_0, etc.
         def _maketest(value):
             def t(self):
@@ -361,7 +399,7 @@ class FreeTDSTestCase(unittest.TestCase):
             locals()['test_image_bytearray_%s' % len(value)] = _maketest(value)
 
     def test_image_upperlatin(self):
-        self._test_strliketype('image', buffer('�'), pyodbc.BINARY)
+        self._test_strliketype('image', buffer('á'), pyodbc.BINARY)
 
     #
     # text
@@ -382,7 +420,7 @@ class FreeTDSTestCase(unittest.TestCase):
         locals()['test_text_buffer_%s' % len(value)] = _maketest(value)
 
     def test_text_upperlatin(self):
-        self._test_strliketype('text', '�')
+        self._test_strliketype('text', 'á')
 
     #
     # bit
@@ -463,7 +501,7 @@ class FreeTDSTestCase(unittest.TestCase):
 
     def _exec(self):
         self.cursor.execute(self.sql)
-        
+
     def test_close_cnxn(self):
         """Make sure using a Cursor after closing its connection doesn't crash."""
 
@@ -472,7 +510,7 @@ class FreeTDSTestCase(unittest.TestCase):
         self.cursor.execute("select * from t1")
 
         self.cnxn.close()
-        
+
         # Now that the connection is closed, we expect an exception.  (If the code attempts to use
         # the HSTMT, we'll get an access violation instead.)
         self.sql = "select * from t1"
@@ -497,7 +535,7 @@ class FreeTDSTestCase(unittest.TestCase):
 
     def test_unicode_query(self):
         self.cursor.execute(u"select 1")
-        
+
     def test_negative_row_index(self):
         self.cursor.execute("create table t1(s varchar(20))")
         self.cursor.execute("insert into t1 values(?)", "1")
@@ -527,10 +565,10 @@ class FreeTDSTestCase(unittest.TestCase):
         # supported is xxx000.
 
         value = datetime(2007, 1, 15, 3, 4, 5, 123000)
-     
+
         self.cursor.execute("create table t1(dt datetime)")
         self.cursor.execute("insert into t1 values (?)", value)
-     
+
         result = self.cursor.execute("select dt from t1").fetchone()[0]
         self.assertEquals(type(value), datetime)
         self.assertEquals(result, value)
@@ -541,10 +579,10 @@ class FreeTDSTestCase(unittest.TestCase):
 
         full    = datetime(2007, 1, 15, 3, 4, 5, 123456)
         rounded = datetime(2007, 1, 15, 3, 4, 5, 123000)
-     
+
         self.cursor.execute("create table t1(dt datetime)")
         self.cursor.execute("insert into t1 values (?)", full)
-     
+
         result = self.cursor.execute("select dt from t1").fetchone()[0]
         self.assertEquals(type(result), datetime)
         self.assertEquals(result, rounded)
@@ -699,7 +737,7 @@ class FreeTDSTestCase(unittest.TestCase):
         rows = self.cursor.fetchall()
         self.assert_(rows is not None)
         self.assert_(rows[0][0] == None)   # 0 years apart
-        
+
 
     #
     # rowcount
@@ -800,7 +838,7 @@ class FreeTDSTestCase(unittest.TestCase):
 
         # Put it back so other tests don't fail.
         pyodbc.lowercase = False
-        
+
     def test_row_description(self):
         """
         Ensure Cursor.description is accessible as Row.cursor_description.
@@ -813,7 +851,7 @@ class FreeTDSTestCase(unittest.TestCase):
         row = self.cursor.execute("select * from t1").fetchone()
 
         self.assertEquals(self.cursor.description, row.cursor_description)
-        
+
 
     def test_temp_select(self):
         # A project was failing to create temporary tables via select into.
@@ -874,7 +912,7 @@ class FreeTDSTestCase(unittest.TestCase):
         for param, row in zip(params, rows):
             self.assertEqual(param[0], row[0])
             self.assertEqual(param[1], row[1])
-        
+
 
     def test_executemany_failure(self):
         """
@@ -885,10 +923,10 @@ class FreeTDSTestCase(unittest.TestCase):
         params = [ (1, 'good'),
                    ('error', 'not an int'),
                    (3, 'good') ]
-        
+
         self.failUnlessRaises(pyodbc.Error, self.cursor.executemany, "insert into t1(a, b) value (?, ?)", params)
 
-        
+
     def test_row_slicing(self):
         self.cursor.execute("create table t1(a int, b int, c int, d int)");
         self.cursor.execute("insert into t1 values(1,2,3,4)")
@@ -982,11 +1020,11 @@ class FreeTDSTestCase(unittest.TestCase):
 
         self.cursor.execute("""
                             create procedure pyodbctest @var1 varchar(32)
-                            as 
-                            begin 
-                              select s 
-                              from t1 
-                            return 
+                            as
+                            begin
+                              select s
+                              from t1
+                            return
                             end
                             """)
         self.cnxn.commit()
@@ -1000,16 +1038,16 @@ class FreeTDSTestCase(unittest.TestCase):
         # for row in self.cursor:
         #     print row.s
 
-    def test_skip(self):
-        # Insert 1, 2, and 3.  Fetch 1, skip 2, fetch 3.
-
-        self.cursor.execute("create table t1(id int)");
-        for i in range(1, 5):
-            self.cursor.execute("insert into t1 values(?)", i)
-        self.cursor.execute("select id from t1 order by id")
-        self.assertEqual(self.cursor.fetchone()[0], 1)
-        self.cursor.skip(2)
-        self.assertEqual(self.cursor.fetchone()[0], 4)
+    # def test_skip(self):
+    #     # Insert 1, 2, and 3.  Fetch 1, skip 2, fetch 3.
+    #
+    #     self.cursor.execute("create table t1(id int)");
+    #     for i in range(1, 5):
+    #         self.cursor.execute("insert into t1 values(?)", i)
+    #     self.cursor.execute("select id from t1 order by id")
+    #     self.assertEqual(self.cursor.fetchone()[0], 1)
+    #     self.cursor.skip(2)
+    #     self.assertEqual(self.cursor.fetchone()[0], 4)
 
     def test_timeout(self):
         self.assertEqual(self.cnxn.timeout, 0) # defaults to zero (off)
@@ -1035,7 +1073,7 @@ class FreeTDSTestCase(unittest.TestCase):
             self.cursor.execute("create table t1 (word varchar (100))")
             words = set (['a'])
             self.cursor.executemany("insert into t1 (word) values (?)", [words])
-            
+
         self.assertRaises(TypeError, f)
 
     def test_row_execute(self):
@@ -1047,7 +1085,7 @@ class FreeTDSTestCase(unittest.TestCase):
 
         self.cursor.execute("create table t2(n int, s varchar(10))")
         self.cursor.execute("insert into t2 values (?, ?)", row)
-        
+
     def test_row_executemany(self):
         "Ensure we can use a Row object as a parameter to executemany"
         self.cursor.execute("create table t1(n int, s varchar(10))")
@@ -1060,7 +1098,7 @@ class FreeTDSTestCase(unittest.TestCase):
 
         self.cursor.execute("create table t2(n int, s varchar(10))")
         self.cursor.executemany("insert into t2 values (?, ?)", rows)
-        
+
     def test_description(self):
         "Ensure cursor.description is correct"
 
@@ -1094,7 +1132,7 @@ class FreeTDSTestCase(unittest.TestCase):
         self.assertEqual(t[5], 2)       # scale
         self.assertEqual(t[6], True)    # nullable
 
-        
+
     def test_none_param(self):
         "Ensure None can be used for params other than the first"
         # Some driver/db versions would fail if NULL was not the first parameter because SQLDescribeParam (only used
@@ -1176,7 +1214,7 @@ class FreeTDSTestCase(unittest.TestCase):
 
         rows = list(rows)
         rows.sort() # uses <
-        
+
     def test_context_manager_success(self):
 
         self.cursor.execute("create table t1(n int)")
@@ -1201,7 +1239,7 @@ class FreeTDSTestCase(unittest.TestCase):
         # From issue 129
         value = self.cursor.execute("select ?", None).fetchone()[0]
         self.assertEqual(value, None)
-        
+
     def test_large_update_nodata(self):
         self.cursor.execute('create table t1(a varbinary(max))')
         hundredkb = bytearray('x'*100*1024)
@@ -1209,9 +1247,9 @@ class FreeTDSTestCase(unittest.TestCase):
 
     def test_func_param(self):
         self.cursor.execute('''
-                            create function func1 (@testparam varchar(4)) 
+                            create function func1 (@testparam varchar(4))
                             returns @rettest table (param varchar(4))
-                            as 
+                            as
                             begin
                                 insert @rettest
                                 select @testparam
@@ -1221,7 +1259,7 @@ class FreeTDSTestCase(unittest.TestCase):
         self.cnxn.commit()
         value = self.cursor.execute("select * from func1(?)", 'test').fetchone()[0]
         self.assertEquals(value, 'test')
-        
+
     def test_no_fetch(self):
         # Issue 89 with FreeTDS: Multiple selects (or catalog functions that issue selects) without fetches seem to
         # confuse the driver.
