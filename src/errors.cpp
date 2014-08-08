@@ -272,8 +272,8 @@ PyObject* GetErrorFromHandle(const char* szFunction, HDBC hdbc, HSTMT hstmt)
         }
 
         iRecord++;
-
-        // A.C.  Removed the following ifndef _MSC_VER since we need to loop through errors for our Linux ODBC driver
+        // Removed ifndef _MSC_VER block since we need to loop in order to get ALL errors for our ODBC driver
+        // We also do not plan on using PostgreSQL so should not hit the bug
     }
 
     if (pMsg == 0)
